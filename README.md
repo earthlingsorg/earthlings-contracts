@@ -92,9 +92,11 @@ The **International Earthlings Foundation** (Georgian NNLE) serves as the legal 
 ## Links
 
 - Website: [earth-lings.org](https://earth-lings.org)
+- Donate: [Giveth](https://giveth.io/project/earthlings-a-new-people-for-a-new-era)
 - Contract: [PolygonScan](https://polygonscan.com/address/0x20e7962878429B803E35F83ba34eD291afEC2Be4)
+- DAO: [Snapshot](https://snapshot.org/#/earthlings-dao.eth)
 - Twitter/X: [@EarthlingsTeam](https://x.com/EarthlingsTeam)
-- LinkedIn: [Arthur Arakelyan](https://www.linkedin.com/in/arthur-arakelyan-83b1503ba/)
+- LinkedIn: [Arthur Arakelian](https://www.linkedin.com/in/arthur-arakelyan-83b1503ba/)
 
 ## License
 
