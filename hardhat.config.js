@@ -1,6 +1,12 @@
 require("@nomicfoundation/hardhat-ethers");
+require("@nomicfoundation/hardhat-verify");
 require("dotenv").config();
 
+// The settings below are the ones the deployed contract was built with.
+// Together with @openzeppelin/contracts pinned to 5.1.0 in package.json they
+// reproduce the runtime bytecode of 0x20e7962878429B803E35F83ba34eD291afEC2Be4
+// on Polygon byte for byte, metadata hash included. Do not change them without
+// re-checking that match.
 /** @type import('hardhat/config').HardhatUserConfig */
 module.exports = {
   solidity: {
@@ -26,5 +32,9 @@ module.exports = {
   paths: {
     sources: "./contracts",
     artifacts: "./artifacts"
+  },
+  etherscan: {
+    // Free key from etherscan.io; Polygon is served through the same key.
+    apiKey: process.env.ETHERSCAN_API_KEY || ""
   }
 };
