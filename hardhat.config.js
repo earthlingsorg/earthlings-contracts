@@ -25,6 +25,12 @@ module.exports = {
       chainId: 137,
       gasPrice: "auto"
     },
+    amoy: {
+      url: process.env.AMOY_RPC_URL || "https://rpc-amoy.polygon.technology",
+      accounts: process.env.DEPLOYER_PRIVATE_KEY ? [process.env.DEPLOYER_PRIVATE_KEY] : [],
+      chainId: 80002,
+      gasPrice: "auto"
+    },
     hardhat: {
       chainId: 31337
     }
