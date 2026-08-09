@@ -148,6 +148,47 @@ async function main() {
   ok(`идентификатор сохранён (${after[0]}), дата вступления не сброшена: ${after[3] === before[3]}`);
   console.log("   членство не прервалось - именно этого требует статья 21 Устава");
 
+  head("ПРИНЯТИЕ ТЕКСТА И ПОДПИСАНИЕ");
+  console.log("   До принятия текста подписать нечего, и контракт это знает.");
+  console.log("   Принят ли текст:", await c.isDeclarationAdopted());
+  const holder = anna;
+  await mustFail(
+    c.connect(holder).signDeclaration("0x" + "ab".repeat(32)),
+    "участник пытается подписать до принятия текста"
+  );
+
+  step("3 января: администрирование записывает хеш принятого текста");
+  const TEXT = "0x" + "ab".repeat(32);
+  await c.connect(adminWallet).setAdoptedDeclaration(TEXT);
+  ok("хеш принятой редакции записан в контракт");
+  await mustFail(
+    c.connect(adminWallet).setAdoptedDeclaration("0x" + "cd".repeat(32)),
+    "администрирование пытается подменить принятый текст"
+  );
+  console.log("   Подменить принятый текст нельзя никому и никогда: иначе все");
+  console.log("   собранные подписи стали бы подписями неизвестно чего.");
+
+  step("человек подписывает сам, своим ключом");
+  console.log("   до подписания earthling:", await c.isEarthling(holder.address),
+    "| паспорт есть:", await c.hasPassport(holder.address));
+  await mustFail(
+    c.connect(adminWallet).signDeclaration(TEXT),
+    "администрирование пытается подписать за человека"
+  );
+  await mustFail(
+    c.connect(holder).signDeclaration("0x" + "cd".repeat(32)),
+    "человек подписывает не тот текст"
+  );
+  await c.connect(holder).signDeclaration(TEXT);
+  ok(`подписал сам: earthling ${await c.isEarthling(holder.address)}, earthlings всего ${await c.earthlingCount()}`);
+  await mustFail(c.connect(holder).signDeclaration(TEXT), "подписать второй раз");
+
+  step("подпись переживает потерю кошелька, но не выход");
+  await c.connect(minterKey).reissue(await c.tokenOfOwner(holder.address), viktor.address);
+  ok(`после перевыпуска на другой адрес earthling: ${await c.isEarthling(viktor.address)}, earthlings ${await c.earthlingCount()}`);
+  await c.connect(viktor).burnByHolder(await c.tokenOfOwner(viktor.address));
+  ok(`после добровольного выхода earthlings: ${await c.earthlingCount()} - человек больше не earthling`);
+
   head("ПРЕДЕЛ НА ВЫПУСК");
   await c.connect(adminWallet).setDailyMintLimit(2);
   await advance(DAY);

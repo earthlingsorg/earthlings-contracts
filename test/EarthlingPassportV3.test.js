@@ -364,6 +364,127 @@ describe("EarthlingPassportV3", function () {
     });
   });
 
+  describe("adoption of the text", function () {
+    const HASH = "0x" + "ab".repeat(32);
+    const OTHER = "0x" + "cd".repeat(32);
+
+    it("is not recorded at deployment, so nobody can sign yet", async function () {
+      assert.equal(await contract.declarationHash(), "0x" + "00".repeat(32));
+      assert.equal(await contract.isDeclarationAdopted(), false);
+      await mint(alice, "e-1");
+      await expectRevert(contract.connect(alice).signDeclaration(HASH), "DeclarationNotAdopted");
+    });
+
+    it("is recorded by administration and only once, ever", async function () {
+      await expectRevert(contract.connect(minter).setAdoptedDeclaration(HASH), "AccessControlUnauthorizedAccount");
+      await expectRevert(contract.connect(admin).setAdoptedDeclaration("0x" + "00".repeat(32)), "EmptyDeclarationHash");
+
+      await contract.connect(admin).setAdoptedDeclaration(HASH);
+      assert.equal(await contract.declarationHash(), HASH);
+      assert.ok((await contract.adoptedAt()) > 0n);
+      assert.equal(await contract.isDeclarationAdopted(), true);
+
+      // Подменить принятый текст нельзя никому и никогда: иначе все собранные
+      // подписи стали бы подписями неизвестно чего.
+      await expectRevert(contract.connect(admin).setAdoptedDeclaration(OTHER), "DeclarationAlreadyAdopted");
+      await expectRevert(contract.connect(admin).setAdoptedDeclaration(HASH), "DeclarationAlreadyAdopted");
+    });
+  });
+
+  describe("signing the Declaration", function () {
+    const HASH = "0x" + "ab".repeat(32);
+    const OTHER = "0x" + "cd".repeat(32);
+
+    beforeEach(async function () {
+      await mint(alice, "e-1");
+      await contract.connect(admin).setAdoptedDeclaration(HASH);
+    });
+
+    it("is the holder's own act and nobody else's", async function () {
+      // ни администратор, ни служба выпуска не могут подписать за человека
+      await expectRevert(contract.connect(admin).signDeclaration(HASH), "NoPassport");
+      await expectRevert(contract.connect(minter).signDeclaration(HASH), "NoPassport");
+      await expectRevert(contract.connect(bob).signDeclaration(HASH), "NoPassport");
+
+      const names = contract.interface.fragments.filter((f) => f.type === "function").map((f) => f.name);
+      assert.ok(!names.some((n) => /signFor|signOnBehalf|adminSign/i.test(n)),
+        "не должно быть никакой функции подписания за другого");
+    });
+
+    it("turns a passport holder into an earthling", async function () {
+      assert.equal(await contract.isEarthling(alice.address), false, "до подписания не earthling");
+      assert.equal(await contract.earthlingCount(), 0n);
+
+      await contract.connect(alice).signDeclaration(HASH);
+
+      assert.equal(await contract.isEarthling(alice.address), true);
+      assert.equal(await contract.earthlingCount(), 1n);
+      assert.ok((await contract.signedAt(1)) > 0n);
+      // паспорт есть у всех подтверждённых, earthling - только подписавший
+      assert.equal(await contract.totalSupply(), 1n);
+    });
+
+    it("refuses a signature given for a different text", async function () {
+      await expectRevert(contract.connect(alice).signDeclaration(OTHER), "DeclarationHashMismatch");
+      assert.equal(await contract.isEarthling(alice.address), false);
+    });
+
+    it("cannot be given twice", async function () {
+      await contract.connect(alice).signDeclaration(HASH);
+      await expectRevert(contract.connect(alice).signDeclaration(HASH), "AlreadySigned");
+      assert.equal(await contract.earthlingCount(), 1n);
+    });
+
+    it("names the text in the event, not just the fact of signing", async function () {
+      const tx = await contract.connect(alice).signDeclaration(HASH);
+      const receipt = await tx.wait();
+      const ev = receipt.logs
+        .map((l) => { try { return contract.interface.parseLog(l); } catch { return null; } })
+        .filter(Boolean).find((l) => l.name === "DeclarationSigned");
+      assert.ok(ev, "DeclarationSigned должно быть");
+      assert.equal(ev.args[1], alice.address);
+      assert.equal(ev.args[2], HASH, "в подписи должен стоять хеш подписанного текста");
+    });
+
+    it("is lost when the person leaves", async function () {
+      await contract.connect(alice).signDeclaration(HASH);
+      await contract.connect(alice).burnByHolder(1);
+      assert.equal(await contract.isEarthling(alice.address), false);
+      assert.equal(await contract.earthlingCount(), 0n);
+    });
+
+    it("is lost when the issuance is annulled", async function () {
+      await grantOperationalRoles();
+      await contract.connect(alice).signDeclaration(HASH);
+      await contract.connect(annuller).proposeAnnulment(1, "две выдачи на одного человека");
+      await advance(TWENTY_ONE_DAYS + 1);
+      await contract.connect(annuller).executeAnnulment(1);
+      assert.equal(await contract.isEarthling(alice.address), false);
+      assert.equal(await contract.earthlingCount(), 0n);
+    });
+
+    it("survives a technical reissue, because a lost wallet is not a change of mind", async function () {
+      await contract.connect(alice).signDeclaration(HASH);
+      const signedBefore = await contract.signedAt(1);
+
+      await advance(30 * DAY);
+      await contract.connect(minter).reissue(1, bob.address);
+
+      const newToken = await contract.tokenOfOwner(bob.address);
+      assert.equal(await contract.isEarthling(bob.address), true, "остаётся earthling после перевыпуска");
+      assert.equal(await contract.signedAt(newToken), signedBefore, "дата подписания не сбрасывается");
+      assert.equal(await contract.earthlingCount(), 1n, "счёт не удваивается и не теряется");
+      assert.equal(await contract.isEarthling(alice.address), false);
+    });
+
+    it("does not double the count when an unsigned passport is reissued", async function () {
+      await advance(DAY);
+      await contract.connect(minter).reissue(1, bob.address);
+      assert.equal(await contract.earthlingCount(), 0n);
+      assert.equal(await contract.isEarthling(bob.address), false);
+    });
+  });
+
   describe("soulbound", function () {
     it("blocks every transfer", async function () {
       await mint(alice, "e-1");

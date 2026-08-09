@@ -89,6 +89,23 @@ contract EarthlingPassportV3 is ERC721, AccessControl, Pausable {
 
     uint256 public annulmentDelay;
 
+    // ---- The adopted text ----
+
+    /**
+     * @dev Hash of the adopted redaction of the Declaration. Zero until adoption.
+     *
+     * Set once and never again. That is deliberate: a signature binds to the text
+     * it was given for, and if the text could be replaced afterwards every
+     * signature already collected would become a signature of nothing. Article 26
+     * of Regulation (EU) 910/2014 requires an advanced electronic signature to be
+     * "linked to the data signed therewith in such a way that any subsequent
+     * change in the data is detectable"; a settable-twice hash would fail that.
+     */
+    bytes32 public declarationHash;
+
+    /// @dev When the adopted text was recorded. Zero until adoption.
+    uint64 public adoptedAt;
+
     // ---- Storage ----
 
     uint256 private _nextTokenId;
@@ -119,7 +136,19 @@ contract EarthlingPassportV3 is ERC721, AccessControl, Pausable {
 
     mapping(uint256 => Annulment) public annulments;
 
+    /**
+     * @dev When the holder of this passport signed the adopted Declaration.
+     *      Zero means not signed, and a holder who has not signed is a
+     *      participant of the founding, not an earthling.
+     *
+     *      Kept apart from PassportData on purpose, so that passportData() and
+     *      getPassport() keep the shape they have in V2 and the calling services
+     *      need no new logic.
+     */
+    mapping(uint256 => uint64) public signedAt;
+
     uint256 private _activeSupply;
+    uint256 private _signedCount;
     uint256 private _adminCount;
 
     /// @dev Per day issuance cap. The day is block.timestamp / 1 days.
@@ -158,6 +187,17 @@ contract EarthlingPassportV3 is ERC721, AccessControl, Pausable {
     event DailyMintLimitChanged(uint256 previous, uint256 current);
     event AnnulmentDelayChanged(uint256 previous, uint256 current);
 
+    /// @dev Emitted once in the life of the contract, on the day of adoption.
+    event DeclarationAdopted(bytes32 indexed declarationHash, uint256 timestamp);
+
+    /// @dev The signature itself. The holder's own transaction, nobody else's.
+    event DeclarationSigned(
+        uint256 indexed tokenId,
+        address indexed signatory,
+        bytes32 indexed declarationHash,
+        uint256 timestamp
+    );
+
     // ---- Errors ----
 
     error TokenDoesNotExist();
@@ -174,6 +214,12 @@ contract EarthlingPassportV3 is ERC721, AccessControl, Pausable {
     error DailyMintLimitReached();
     error LimitMustBePositive();
     error CannotRemoveLastAdmin();
+    error DeclarationNotAdopted();
+    error DeclarationAlreadyAdopted();
+    error EmptyDeclarationHash();
+    error NoPassport();
+    error AlreadySigned();
+    error DeclarationHashMismatch(bytes32 expected, bytes32 actual);
 
     /**
      * @param admin           Holds DEFAULT_ADMIN_ROLE: grants and revokes roles.
@@ -231,6 +277,9 @@ contract EarthlingPassportV3 is ERC721, AccessControl, Pausable {
 
         PassportData memory pd = passportData[tokenId];
         string memory eid = pd.earthlingId;
+        // Подпись должна пережить перевыпуск: человек, потерявший доступ к
+        // кошельку, не перестаёт быть earthling из-за технической аварии.
+        uint64 signature = signedAt[tokenId];
 
         // A pending annulment does not survive the token it was aimed at.
         if (annulments[tokenId].proposedAt != 0) {
@@ -241,6 +290,12 @@ contract EarthlingPassportV3 is ERC721, AccessControl, Pausable {
         _release(tokenId, oldHolder, eid);
 
         uint256 newTokenId = _issue(newHolder, eid, pd.pseudonym, pd.verificationHash, pd.mintedAt);
+
+        if (signature != 0) {
+            signedAt[newTokenId] = signature;
+            _signedCount += 1;
+            emit DeclarationSigned(newTokenId, newHolder, declarationHash, signature);
+        }
 
         emit PassportReissued(tokenId, newTokenId, oldHolder, newHolder, pd.mintedAt);
         return newTokenId;
@@ -280,6 +335,50 @@ contract EarthlingPassportV3 is ERC721, AccessControl, Pausable {
 
         emit PassportMinted(tokenId, to, earthlingId, pseudonym, block.timestamp);
         return tokenId;
+    }
+
+    // ---- Adoption and signing ----
+
+    /**
+     * @dev Records the hash of the adopted redaction. Callable once, ever.
+     *      Until it is called nobody can sign, which is correct: before the text
+     *      is adopted there is nothing to sign.
+     */
+    function setAdoptedDeclaration(bytes32 hash) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (hash == bytes32(0)) revert EmptyDeclarationHash();
+        if (declarationHash != bytes32(0)) revert DeclarationAlreadyAdopted();
+
+        declarationHash = hash;
+        adoptedAt = uint64(block.timestamp);
+
+        emit DeclarationAdopted(hash, block.timestamp);
+    }
+
+    /**
+     * @dev Signing the Declaration. Only the holder of the passport can call it
+     *      for their own passport: signing is a personal act, and no role, service
+     *      or administrator can perform it for a person or prevent it.
+     *
+     * @param expectedHash the hash of the text the caller intends to sign. It is a
+     *        parameter and not read from storage on purpose: this way the
+     *        signatory's own transaction carries the content they are binding
+     *        themselves to, rather than binding to whatever the contract happens
+     *        to hold. A mismatch reverts.
+     */
+    function signDeclaration(bytes32 expectedHash) external {
+        if (declarationHash == bytes32(0)) revert DeclarationNotAdopted();
+        if (expectedHash != declarationHash) {
+            revert DeclarationHashMismatch(expectedHash, declarationHash);
+        }
+
+        uint256 tokenId = _holderToken[msg.sender];
+        if (tokenId == 0) revert NoPassport();
+        if (signedAt[tokenId] != 0) revert AlreadySigned();
+
+        signedAt[tokenId] = uint64(block.timestamp);
+        _signedCount += 1;
+
+        emit DeclarationSigned(tokenId, msg.sender, declarationHash, block.timestamp);
     }
 
     // ---- Destruction ----
@@ -360,6 +459,13 @@ contract EarthlingPassportV3 is ERC721, AccessControl, Pausable {
         delete passportData[tokenId];
         hasPassport[holder] = false;
         delete _holderToken[holder];
+        // Подпись уходит вместе с паспортом: человек, который вышел, больше не
+        // earthling, а аннулированная выдача означает, что принадлежность
+        // правомерно не возникала.
+        if (signedAt[tokenId] != 0) {
+            _signedCount -= 1;
+            delete signedAt[tokenId];
+        }
         _activeSupply -= 1;
         _burn(tokenId);
     }
@@ -390,6 +496,27 @@ contract EarthlingPassportV3 is ERC721, AccessControl, Pausable {
     /// @dev One call instead of scanning ownerOf(1..N). Returns 0 if none.
     function tokenOfOwner(address holder) external view returns (uint256) {
         return _holderToken[holder];
+    }
+
+    /**
+     * @dev Holding a passport and being an earthling are two different things,
+     *      and the chain must be able to answer both. A person who confirmed
+     *      their identity during the founding period holds a passport but is not
+     *      an earthling until they sign the adopted text.
+     */
+    function isEarthling(address holder) external view returns (bool) {
+        uint256 tokenId = _holderToken[holder];
+        return tokenId != 0 && signedAt[tokenId] != 0;
+    }
+
+    /// @dev How many people have signed the adopted Declaration.
+    function earthlingCount() external view returns (uint256) {
+        return _signedCount;
+    }
+
+    /// @dev True once the adopted text is recorded and signing is possible.
+    function isDeclarationAdopted() external view returns (bool) {
+        return declarationHash != bytes32(0);
     }
 
     function getPassport(uint256 tokenId) external view returns (
