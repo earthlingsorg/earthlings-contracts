@@ -145,6 +145,46 @@ describe("EarthlingPassportV3", function () {
         "ZeroAddress"
       );
     });
+
+    it("does not let a receiving contract corrupt the registry by burning during onERC721Received", async function () {
+      // _issue used to call _safeMint before its own bookkeeping (passportData,
+      // hasPassport, earthlingIdToToken, _holderToken, _activeSupply) was
+      // written. A contract recipient can act inside the ERC-721 receiver hook,
+      // which fires while ownerOf(tokenId) already resolves to it but none of
+      // that bookkeeping exists yet. Calling burnByHolder from inside the hook
+      // used to burn the token mid-mint while the outer call still went on to
+      // write passport data for a token nobody owned any more - a permanently
+      // stuck earthlingId and holder slot, and totalSupply one higher than the
+      // number of tokens that actually exist.
+      const Receiver = await ethers.getContractFactory("ReentrantReceiver");
+      const receiver = await Receiver.deploy();
+      await receiver.waitForDeployment();
+      await receiver.setPassport(await contract.getAddress());
+      const receiverAddress = await receiver.getAddress();
+
+      const supplyBefore = await contract.totalSupply();
+      await contract.connect(minter).mintPassport(receiverAddress, "e-reentrant", "p", "h");
+
+      const hasIt = await contract.hasPassport(receiverAddress);
+      const tokenId = await contract.tokenOfOwner(receiverAddress);
+
+      if (hasIt) {
+        // The registry says the receiver holds a passport - then a real,
+        // owned token must back that up.
+        assert.notEqual(tokenId, 0n);
+        assert.equal((await contract.getPassport(tokenId))[4], receiverAddress);
+        assert.equal(await contract.getTokenByEarthlingId("e-reentrant"), tokenId);
+        assert.equal(await contract.totalSupply(), supplyBefore + 1n);
+      } else {
+        // The receiver burned its own passport mid-mint - fine, that is its
+        // right - but then nothing may still point at it: no dangling
+        // earthlingId, no holder slot, and the active count must be back to
+        // where it started.
+        assert.equal(tokenId, 0n);
+        await expectRevert(contract.getTokenByEarthlingId("e-reentrant"), "TokenDoesNotExist");
+        assert.equal(await contract.totalSupply(), supplyBefore);
+      }
+    });
   });
 
   describe("daily mint cap", function () {

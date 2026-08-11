@@ -319,8 +319,26 @@ contract EarthlingPassportV3 is ERC721, AccessControl, Pausable {
         mintedOnDay[day] = used;
 
         uint256 tokenId = _nextTokenId++;
-        _safeMint(to, tokenId);
 
+        // Bookkeeping is written before _safeMint, not after. _safeMint calls
+        // onERC721Received when `to` is a contract, and that callback runs
+        // with ownerOf(tokenId) already resolving to `to` - the ERC-721 owner
+        // mapping is set before the receiver hook fires. A malicious `to`
+        // could call back into burnByHolder from inside that hook: ownership
+        // already checks out, so the call would proceed against whatever this
+        // function had or had not written yet. With the old order that was an
+        // empty passportData and a not-yet-incremented _activeSupply - the
+        // reentrant burn underflowed the counter (or, once other passports
+        // existed, silently decremented one that was never counted), then
+        // this function resumed and wrote real data for a token it had just
+        // watched get burned out from under it: a passport with no owner,
+        // an earthlingId permanently pointing at a dead token, and a
+        // totalSupply one higher than the tokens that actually exist. With
+        // the order below, the same reentrant burn instead burns a token
+        // whose bookkeeping is already complete and consistent, which is a
+        // legitimate (if unusual) instant exit, not a corruption. Covered by
+        // "does not let a receiving contract corrupt the registry by burning
+        // during onERC721Received" in the test suite.
         passportData[tokenId] = PassportData({
             earthlingId: earthlingId,
             pseudonym: pseudonym,
@@ -332,6 +350,8 @@ contract EarthlingPassportV3 is ERC721, AccessControl, Pausable {
         earthlingIdToToken[earthlingId] = tokenId;
         _holderToken[to] = tokenId;
         _activeSupply += 1;
+
+        _safeMint(to, tokenId);
 
         emit PassportMinted(tokenId, to, earthlingId, pseudonym, block.timestamp);
         return tokenId;
