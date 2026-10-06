@@ -7,7 +7,8 @@
 //   DEPLOYER_PRIVATE_KEY  - ключ, с которого идёт развёртывание, нужен только для этого
 //   V3_ADMIN_ADDRESS      - получит право выдавать и отзывать роли; должен быть мультиподписью
 //   V3_MINTER_ADDRESS     - ключ службы подтверждения личности, только выпуск
-//   V3_DAILY_MINT_LIMIT   - суточный предел выпуска, по умолчанию 50
+//   V3_DAILY_MINT_LIMIT   - суточный предел выпуска, по умолчанию 100 (решение Артура 2026-10-06:
+//                           не больше минимальной базы в сто подтверждённых участников)
 //
 // Скрипт намеренно отказывается разворачивать контракт, если администрирование
 // и выпуск оказались одним адресом: тогда разделение ролей теряет смысл на
@@ -24,7 +25,7 @@ function need(name) {
 async function main() {
   const admin = ethers.getAddress(need("V3_ADMIN_ADDRESS"));
   const minter = ethers.getAddress(need("V3_MINTER_ADDRESS"));
-  const limit = BigInt(process.env.V3_DAILY_MINT_LIMIT || "50");
+  const limit = BigInt(process.env.V3_DAILY_MINT_LIMIT || "100");
 
   if (admin.toLowerCase() === minter.toLowerCase()) {
     throw new Error(
@@ -53,6 +54,12 @@ async function main() {
 
   const address = await c.getAddress();
   console.log("контракт развёрнут:   ", address);
+  try {
+    const receipt = await ethers.provider.getTransactionReceipt(c.deploymentTransaction().hash);
+    const price = receipt.gasPrice || receipt.effectiveGasPrice || 0n;
+    console.log("блок:                 ", receipt.blockNumber);
+    console.log("газ развёртывания:    ", receipt.gasUsed.toString(), "при", ethers.formatUnits(price, "gwei"), "gwei =", ethers.formatEther(receipt.gasUsed * price), "POL");
+  } catch (_) { /* не критично */ }
 
   // Проверяем то, что должно быть верно сразу после развёртывания.
   const checks = [
@@ -74,11 +81,12 @@ async function main() {
   console.log("\nчто делать дальше:");
   console.log("  1. Верифицировать исходник:");
   console.log(`     npx hardhat verify --network ${network.name} ${address} ${admin} ${minter} ${limit}`);
-  console.log("  2. Прописать адрес в окружении служб: SBT_CONTRACT_ADDRESS и POLYGON_CONTRACT_ADDRESS");
-  console.log("  3. Заменить блок ABI в earthlings-kyc/app/services/minting-service.js");
-  console.log("  4. Перенастроить стратегию голосований в Snapshot на новый адрес");
-  console.log("  5. Обновить адрес в ru32, SBT-паспорте и README_DAO.md");
-  console.log("  6. Роли ANNULMENT_ROLE, CANCEL_ROLE и PAUSER_ROLE выдать после выборов");
+  console.log("  2. Роли ANNULMENT_ROLE, CANCEL_ROLE, PAUSER_ROLE выдать Safe (Р3): scripts/safe-calls.js печатает вызовы");
+  console.log("  3. Проверить приёмку: V3_ADDRESS=" + address + " npx hardhat run scripts/check-v3.js --network " + network.name);
+  console.log("  4. Окружение служб: POLYGON_CONTRACT_ADDRESS, CONTRACT_ADDRESS (KYC), SBT_CONTRACT_ADDRESS (платформа);");
+  console.log("     Snapshot перенастраивать не нужно - стратегия ходит на сервер платформы, адреса в ней нет");
+  console.log("  5. ABI в KYC: node scripts/export-kyc-abi.js (уже сделано для V3, 2026-10-06)");
+  console.log("  6. Адрес в документах 15, 23, 32 и README - отдельный заход правок мастера по отчёту");
 }
 
 main().then(() => process.exit(0)).catch((e) => { console.error("\n" + e.message); process.exit(1); });
