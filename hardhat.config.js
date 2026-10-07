@@ -29,7 +29,9 @@ module.exports = {
       url: process.env.AMOY_RPC_URL || "https://polygon-amoy-bor-rpc.publicnode.com",
       accounts: process.env.DEPLOYER_PRIVATE_KEY ? [process.env.DEPLOYER_PRIVATE_KEY] : [],
       chainId: 80002,
-      gasPrice: "auto"
+      // Кран даёт 0,1 POL в сутки, а узел по умолчанию советует 95 gwei при базовой
+      // комиссии ~0: AMOY_GAS_PRICE_GWEI задаёт цену руками (минимум сети - 25 gwei).
+      gasPrice: process.env.AMOY_GAS_PRICE_GWEI ? Math.round(Number(process.env.AMOY_GAS_PRICE_GWEI) * 1e9) : "auto"
     },
     hardhat: {
       chainId: 31337
