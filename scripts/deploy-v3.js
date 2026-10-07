@@ -15,6 +15,7 @@
 // первом же шаге, а именно ради него V3 и делался.
 
 const { ethers, network } = require("hardhat");
+const { assertAdminIsContractOnMainnet } = require("./lib/guards");
 
 function need(name) {
   const v = process.env[name];
@@ -46,6 +47,12 @@ async function main() {
   console.log("суточный предел выпуска:", limit.toString());
 
   if (balance === 0n) throw new Error("На счету разворачивающего нет средств на газ");
+
+  // Д9: в основной сети администратор обязан быть контрактом (Safe). Проверяется ДО
+  // отправки чего-либо в сеть; на Amoy тестовый администратор - обычный кошелёк, там
+  // проверка не применяется.
+  const guard = await assertAdminIsContractOnMainnet(ethers.provider, admin, network.name);
+  console.log("администратор - контракт:", guard.checked ? "да (проверено getCode)" : "не проверяется в этой сети");
 
   const Factory = await ethers.getContractFactory("EarthlingPassportV3");
   const c = await Factory.deploy(admin, minter, limit);
