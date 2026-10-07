@@ -65,7 +65,17 @@ async function expectRevert(step, promise, errorName, iface) {
 async function main() {
   const local = network.name === "hardhat" || network.name === "localhost";
   if (!local && network.name !== "amoy") throw new Error("Этот скрипт для --network amoy (или локальной сети для прогона самого скрипта)");
-  const provider = ethers.provider;
+  // На Amoy узел советует 95 gwei при базовой комиссии ~0, а кран даёт 0,1 POL в сутки:
+  // при заданном AMOY_GAS_PRICE_GWEI все тестовые кошельки платят ровно эту цену.
+  let provider = ethers.provider;
+  if (!local && process.env.AMOY_GAS_PRICE_GWEI) {
+    const fixed = ethers.parseUnits(process.env.AMOY_GAS_PRICE_GWEI, "gwei");
+    class FixedFeeProvider extends ethers.JsonRpcProvider {
+      async getFeeData() { return new ethers.FeeData(fixed, null, null); }
+    }
+    provider = new FixedFeeProvider(process.env.AMOY_RPC_URL || "https://polygon-amoy-bor-rpc.publicnode.com", 80002, { staticNetwork: true });
+    console.log("цена газа задана руками:", process.env.AMOY_GAS_PRICE_GWEI, "gwei");
+  }
   const [deployer] = await ethers.getSigners();
   const admin = new ethers.Wallet(need("AMOY_TEST_ADMIN_KEY"), provider);
   const minter = new ethers.Wallet(need("AMOY_TEST_MINTER_KEY"), provider);
@@ -85,7 +95,7 @@ async function main() {
   const holderB = ethers.Wallet.createRandom().connect(provider);
   const holderC = ethers.Wallet.createRandom().connect(provider);
 
-  const c = await ethers.getContractAt("EarthlingPassportV3", address, deployer);
+  const c = (await ethers.getContractAt("EarthlingPassportV3", address, deployer)).connect(provider);
   const iface = c.interface;
   const asAdmin = c.connect(admin);
   const asMinter = c.connect(minter);
@@ -112,10 +122,12 @@ async function main() {
       await send(deployer.sendTransaction({ to, value: ethers.parseEther(amount) }));
     }
   };
-  await topUp(admin.address, "0.3");
-  await topUp(minter.address, "0.3");
-  await topUp(minter2.address, "0.1");
-  await topUp(holderA.address, "0.05");
+  // Суммы под 25 gwei: администратору ~12 вызовов по 50-100k газа, ключу выпуска ~8
+  // выпусков по ~200k, второму ключу один выпуск, держателю одно гашение.
+  await topUp(admin.address, "0.025");
+  await topUp(minter.address, "0.04");
+  await topUp(minter2.address, "0.006");
+  await topUp(holderA.address, "0.003");
   console.log("   готово");
 
   // --- Р3: роли администратору
