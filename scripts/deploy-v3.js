@@ -48,11 +48,11 @@ async function main() {
 
   if (balance === 0n) throw new Error("На счету разворачивающего нет средств на газ");
 
-  // Д9: в основной сети администратор обязан быть контрактом (Safe). Проверяется ДО
-  // отправки чего-либо в сеть; на Amoy тестовый администратор - обычный кошелёк, там
-  // проверка не применяется.
+  // Д9/Д11: вне тестовых цепей администратор обязан быть контрактом (Safe). Решение по
+  // chainId от узла, не по имени сети; проверяется ДО отправки чего-либо в сеть.
   const guard = await assertAdminIsContractOnMainnet(ethers.provider, admin, network.name);
-  console.log("администратор - контракт:", guard.checked ? "да (проверено getCode)" : "не проверяется в этой сети");
+  console.log("chainId от узла:       ", guard.chainId.toString());
+  console.log("администратор - контракт:", guard.checked ? "да (проверено getCode)" : "не проверяется: тестовая цепь");
 
   const Factory = await ethers.getContractFactory("EarthlingPassportV3");
   const c = await Factory.deploy(admin, minter, limit);
