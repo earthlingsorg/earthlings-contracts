@@ -117,17 +117,18 @@ async function main() {
 
   // --- газ остальным кошелькам (только тестовые POL)
   console.log("\n== газ тестовым кошелькам");
+  // Досылается только разница до нужной суммы: при повторном прогоне остатки не пропадают.
   const topUp = async (to, amount) => {
-    if ((await provider.getBalance(to)) < ethers.parseEther(amount)) {
-      await send(deployer.sendTransaction({ to, value: ethers.parseEther(amount) }));
-    }
+    const have = await provider.getBalance(to);
+    const want = ethers.parseEther(amount);
+    if (have < want) await send(deployer.sendTransaction({ to, value: want - have }));
   };
   // Суммы под 25 gwei: администратору ~12 вызовов по 50-100k газа, ключу выпуска ~8
   // выпусков по ~200k, второму ключу один выпуск, держателю одно гашение.
   await topUp(admin.address, "0.025");
   await topUp(minter.address, "0.04");
-  await topUp(minter2.address, "0.006");
-  await topUp(holderA.address, "0.003");
+  await topUp(minter2.address, "0.012"); // один выпуск ~352k газа при 25 gwei = 0,0088
+  await topUp(holderA.address, "0.005"); // burnByHolder ~126k газа при 25 gwei = 0,0032
   console.log("   готово");
 
   // --- Р3: роли администратору
